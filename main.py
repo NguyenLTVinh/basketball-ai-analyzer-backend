@@ -2,7 +2,11 @@ from fastapi import FastAPI, File, UploadFile, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 import os
+import asyncio
 from gpt import *
+
+events = []
+analyzing = False
 
 app = FastAPI()
 
@@ -31,15 +35,22 @@ async def upload_video(file: UploadFile = File(...)):
 @app.post("/analyze/")
 async def analyze_video(request: Request):
     """Processes the video and detects events."""
+    global analyzing, events
+    if analyzing:
+        raise HTTPException(status_code=429, detail="Analysis is already in progress.") 
+    analyzing = True
     data = await request.json()
     video_path = data.get("video_path")
     if not video_path:
+        analyzing = False
         raise HTTPException(status_code=422, detail="Video path is required.")
     if not os.path.exists(video_path):
+        analyzing = False
         raise HTTPException(status_code=404, detail="Video file not found.")
-    global events
+    # Process video and detect events
     events = process_video(video_path)
     save_results(events)
+    analyzing = False
     return {"status": "completed", "events": events}
 
 @app.get("/events/")
@@ -51,6 +62,22 @@ async def get_events():
 async def seek_video(timestamp: float):
     """Seeks the video to a specific timestamp."""
     return {"status": "success", "timestamp": timestamp}
+
+@app.post("/chatbot/")
+async def chatbot_endpoint(request: Request):
+    """Handles chatbot interactions using detected video events."""
+    data = await request.json()
+    user_message = data.get("message")
+
+    if not user_message:
+        raise HTTPException(status_code=422, detail="User message is required.")
+
+    global events, analyzing
+    if not events and not analyzing:
+        return {"response": "No events have been analyzed yet. Please upload and analyze a video first."}
+
+    response_text = get_response_with_events(events, analyzing, user_message)
+    return {"response": response_text}
 
 if __name__ == "__main__":
     import uvicorn

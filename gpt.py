@@ -4,14 +4,12 @@ import cv2
 from openai import OpenAI
 import base64
 
-# Global variable to store events
-events = []
-
 # Initialize OpenAI client
 api_key = os.getenv("OPENAI_API_KEY")
 if not api_key:
     raise ValueError("API key not found. Set the OPENAI_API_KEY environment variable.")
-client = OpenAI(api_key=api_key)
+analyzer = OpenAI(api_key=api_key)
+assistant = OpenAI(api_key=api_key)
 
 def encode_image_to_base64(image):
     """Encodes an image to base64."""
@@ -45,7 +43,7 @@ def detect_events_with_gpt(frame1, frame2, frame3, timestamp):
     encoded_frame2 = encode_image_to_base64(frame2)
     encoded_frame3 = encode_image_to_base64(frame3)
 
-    response = client.chat.completions.create(
+    response = analyzer.chat.completions.create(
         model="gpt-4o-mini",
         messages=[
             {
@@ -104,3 +102,26 @@ def save_results(events, output_file="events.json"):
     with open(output_file, "w") as f:
         json.dump(events, f, indent=4)
 
+def get_response_with_events(events, analyzing, user_message):
+    """Generates a chatbot response based on user input and detected events."""
+    if analyzing:
+        return "I'm currently analyzing the video, please wait..."
+
+    if not events:
+        return "No events detected yet. Please analyze a video first."
+
+    # Format events into a readable summary
+    events_summary = "\n".join([f"At {event['time']}s: {event['event']}" for event in events]) or "No significant events detected."
+
+    # Send user message + detected events to OpenAI
+    response = assistant.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[
+            {"role": "system", "content": "You are a basketball analyst assistant. Use provided game events to enhance responses."},
+            {"role": "user", "content": f"Here are the detected basketball events:\n{events_summary}\n\nUser question: {user_message}"}
+        ],
+        temperature=1,
+        max_tokens=300
+    )
+
+    return response.choices[0].message.content.strip()
