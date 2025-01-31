@@ -115,7 +115,7 @@ def get_response_with_events(events, user_message):
     response = assistant.chat.completions.create(
         model="gpt-4o-mini",
         messages=[
-            {"role": "system", "content": "You are a basketball analyst assistant. Use provided game events to enhance responses. Answer in 200 words maximum."},
+            {"role": "system", "content": "You are a basketball analyst assistant. Use provided game events to enhance responses."},
             {"role": "user", "content": f"Here are the detected basketball events:\n{events_summary}\n\nUser question: {user_message}"}
         ],
         temperature=1,
