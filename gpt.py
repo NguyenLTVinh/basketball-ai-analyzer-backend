@@ -3,8 +3,9 @@ import json
 import cv2
 from openai import OpenAI
 import base64
+from dotenv import load_dotenv
 
-# Initialize OpenAI client
+load_dotenv()
 api_key = os.getenv("OPENAI_API_KEY")
 if not api_key:
     raise ValueError("API key not found. Set the OPENAI_API_KEY environment variable.")
@@ -75,7 +76,7 @@ def detect_events_with_gpt(frame1, frame2, frame3, timestamp):
 
     result_text = response.choices[0].message.content.strip()
     print(result_text)
-    
+
     try:
         result_json = json.loads(result_text.replace("```json", "").replace("```", ""))
         return [(timestamp, action["event"]) for action in result_json.get("actions", [])]
@@ -102,11 +103,8 @@ def save_results(events, output_file="events.json"):
     with open(output_file, "w") as f:
         json.dump(events, f, indent=4)
 
-def get_response_with_events(events, analyzing, user_message):
+def get_response_with_events(events, user_message):
     """Generates a chatbot response based on user input and detected events."""
-    if analyzing:
-        return "I'm currently analyzing the video, please wait..."
-
     if not events:
         return "No events detected yet. Please analyze a video first."
 

@@ -1,6 +1,7 @@
 from fastapi import FastAPI, File, UploadFile, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from fastapi import BackgroundTasks
 import os
 import asyncio
 from gpt import *
@@ -33,25 +34,26 @@ async def upload_video(file: UploadFile = File(...)):
     return {"filename": file.filename, "location": file.filename}
 
 @app.post("/analyze/")
-async def analyze_video(request: Request):
-    """Processes the video and detects events."""
+async def analyze_video(request: Request, background_tasks: BackgroundTasks):
+    """Processes the video in the background and detects events."""
     global analyzing, events
     if analyzing:
         raise HTTPException(status_code=429, detail="Analysis is already in progress.") 
-    analyzing = True
     data = await request.json()
     video_path = data.get("video_path")
     if not video_path:
-        analyzing = False
         raise HTTPException(status_code=422, detail="Video path is required.")
     if not os.path.exists(video_path):
-        analyzing = False
         raise HTTPException(status_code=404, detail="Video file not found.")
-    # Process video and detect events
-    events = process_video(video_path)
-    save_results(events)
-    analyzing = False
-    return {"status": "completed", "events": events}
+    analyzing = True
+    def background_task():
+        """Runs video processing in the background."""
+        global events, analyzing
+        events = process_video(video_path)
+        save_results(events)
+        analyzing = False
+    background_tasks.add_task(background_task)
+    return {"status": "started", "message": "Video analysis is running in the background."}
 
 @app.get("/events/")
 async def get_events():
@@ -62,6 +64,12 @@ async def get_events():
 async def seek_video(timestamp: float):
     """Seeks the video to a specific timestamp."""
     return {"status": "success", "timestamp": timestamp}
+
+@app.get("/status/")
+async def get_analysis_status():
+    """Returns whether the analysis is still running or completed."""
+    global analyzing
+    return {"analyzing": analyzing}
 
 @app.post("/chatbot/")
 async def chatbot_endpoint(request: Request):
@@ -76,7 +84,10 @@ async def chatbot_endpoint(request: Request):
     if not events and not analyzing:
         return {"response": "No events have been analyzed yet. Please upload and analyze a video first."}
 
-    response_text = get_response_with_events(events, analyzing, user_message)
+    if analyzing:
+        return {"response": "I'm currently analyzing the video, please wait..."}
+
+    response_text = get_response_with_events(events, user_message)
     return {"response": response_text}
 
 if __name__ == "__main__":
