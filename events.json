@@ -4,11 +4,23 @@
         "event": "pass"
     },
     {
-        "time": 1.8,
+        "time": 1.0,
+        "event": "pass"
+    },
+    {
+        "time": 2.0,
+        "event": "pass"
+    },
+    {
+        "time": 3.0,
         "event": "shoot"
     },
     {
-        "time": 3.6,
+        "time": 4.0,
+        "event": "shoot"
+    },
+    {
+        "time": 5.0,
         "event": "shoot"
     }
 ]

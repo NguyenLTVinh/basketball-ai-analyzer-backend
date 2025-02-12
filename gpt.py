@@ -4,6 +4,7 @@ import cv2
 from openai import AzureOpenAI
 import base64
 from dotenv import load_dotenv
+import asyncio
 
 load_dotenv()
 
@@ -29,7 +30,7 @@ def encode_image_to_base64(image):
     _, buffer = cv2.imencode(".jpg", image)
     return base64.b64encode(buffer).decode("utf-8")
 
-def extract_frames(video_path, frame_interval=15):
+def extract_frames(video_path, frame_interval=5):
     """Extracts frames from the video at specified intervals."""
     cap = cv2.VideoCapture(video_path)
     fps = int(cap.get(cv2.CAP_PROP_FPS))
@@ -50,65 +51,77 @@ def extract_frames(video_path, frame_interval=15):
     cap.release()
     return frames, timestamps
 
-def detect_events_with_gpt(frame1, frame2, frame3, timestamp):
-    """Sends three consecutive frames to GPT-4V for structured action detection."""
-    encoded_frame1 = encode_image_to_base64(frame1)
-    encoded_frame2 = encode_image_to_base64(frame2)
-    encoded_frame3 = encode_image_to_base64(frame3)
-
-    response = analyzer.chat.completions.create(
-        model="gpt-4o-video-understand",
-        messages=[
-            {
-                "role": "system",
-                "content": (
-                    "You are an AI that detects basketball actions (shoot, pass) from images. "
-                    "You MUST use the given timestamp as the 'time' value in the output. "
-                    "Respond only in the following JSON format: "
-                    "{\"actions\": [{\"time\": <provided_timestamp>, \"event\": \"<shoot_or_pass>\"}]}. "
-                    "DO NOT make up timestamps; use ONLY the provided one."
-                )
-            },
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": f"Analyze these frames and determine if any basketball player performs a 'shoot' or 'pass' action. Use {timestamp} as the 'time' value. Return the result strictly in JSON format."},
-                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{encoded_frame1}"}},
-                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{encoded_frame2}"}},
-                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{encoded_frame3}"}}
-                ]
-            }
-        ],
-        temperature=1,
-        max_tokens=300,
-        top_p=1,
-        frequency_penalty=0,
-        presence_penalty=0,
-    )
-
-    result_text = response.choices[0].message.content.strip()
-    print(result_text)
-
-    try:
-        result_json = json.loads(result_text.replace("```json", "").replace("```", ""))
-        return [(timestamp, action["event"]) for action in result_json.get("actions", [])]
-    except json.JSONDecodeError:
-        return []
-
-def process_video(video_path):
-    """Processes video and detects key basketball events."""
+def divide_video_into_chunks(video_path, parallel_calls):
     frames, timestamps = extract_frames(video_path)
-    detected_events = []
-    last_event_time = {}
+    total_frames = len(frames)
+    chunk_size = total_frames // parallel_calls
 
-    for i in range(len(frames) - 2):
-        events = detect_events_with_gpt(frames[i], frames[i + 1], frames[i + 2], timestamps[i])
-        for timestamp, event in events:
-            if event not in last_event_time or (timestamp - last_event_time[event]) >= 1.5:
-                detected_events.append({"time": timestamp, "event": event})
-                last_event_time[event] = timestamp
+    print(f"Total frames: {total_frames}, Chunk size: {chunk_size}")
+    
+    
+    chunks = [frames[i*chunk_size:(i+1)*chunk_size] for i in range(parallel_calls)]
+    chunked_timestamps = [timestamps[i*chunk_size:(i+1)*chunk_size] for i in range(parallel_calls)]
+    for i, chunk in enumerate(chunks):
+        print(f"Chunk {i} has {len(chunk)} frames starting at {chunked_timestamps[i]} seconds")
 
-    return detected_events
+    return chunks, chunked_timestamps
+
+async def detect_events_with_gpt_parallel(frame_chunk, chunked_timestamp):
+    events = []
+    for i in range(0, len(frame_chunk) - 2, 3):
+        encoded_frame1 = encode_image_to_base64(frame_chunk[i])
+        encoded_frame2 = encode_image_to_base64(frame_chunk[i+1])
+        encoded_frame3 = encode_image_to_base64(frame_chunk[i+2])
+
+        timestamp = chunked_timestamp[i]
+        
+        response = analyzer.chat.completions.create(
+            model="gpt-4o-video-understand",
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You are an AI that detects basketball actions (shoot, pass) from images."
+                        "You MUST use the given timestamp as the 'time' value in the output."
+                        "Respond only in JSON format: "
+                        "{\"actions\": [{\"time\": <provided_timestamp>, \"event\": \"<shoot_or_pass>\"}]}"
+                    )
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": f"Analyze these frames and determine if any basketball player performs a 'shoot' or 'pass' action. Use {timestamp} as the 'time' value. Return the result strictly in JSON format."},
+                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{encoded_frame1}"}},
+                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{encoded_frame2}"}},
+                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{encoded_frame3}"}}
+                    ]
+                }
+            ],
+            temperature=1,
+            max_tokens=300,
+            top_p=1
+        )
+
+        result_text = response.choices[0].message.content.strip()
+        print(f"API response: {result_text}")
+        try:
+            result_json = json.loads(result_text.replace("```json", "").replace("```", ""))
+            for action in result_json.get("actions", []):
+                events.append({"time": action["time"], "event": action["event"]})
+        except json.JSONDecodeError:
+            continue
+
+    return events
+
+async def process_video_parallel(video_path, parallel_calls):
+    chunks, chunked_timestamps = divide_video_into_chunks(video_path, parallel_calls)
+
+    tasks = [
+        detect_events_with_gpt_parallel(chunk, chunked_timestamp) 
+        for chunk, chunked_timestamp in zip(chunks, chunked_timestamps)
+    ]
+    all_events = await asyncio.gather(*tasks)
+    return [event for chunk_events in all_events for event in chunk_events]
 
 def save_results(events, output_file="events.json"):
     """Saves the detected events to a JSON file."""

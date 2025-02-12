@@ -8,6 +8,7 @@ from gpt import *
 
 events = []
 analyzing = False
+parallel_calls = 6
 
 app = FastAPI()
 
@@ -38,21 +39,26 @@ async def analyze_video(request: Request, background_tasks: BackgroundTasks):
     """Processes the video in the background and detects events."""
     global analyzing, events
     if analyzing:
-        raise HTTPException(status_code=429, detail="Analysis is already in progress.") 
+        raise HTTPException(status_code=429, detail="Analysis is already in progress.")
+    
     data = await request.json()
     video_path = data.get("video_path")
     if not video_path:
         raise HTTPException(status_code=422, detail="Video path is required.")
     if not os.path.exists(video_path):
         raise HTTPException(status_code=404, detail="Video file not found.")
-    analyzing = True
-    def background_task():
-        """Runs video processing in the background."""
+    
+    async def background_task(video_path):
         global events, analyzing
-        events = process_video(video_path)
-        save_results(events)
-        analyzing = False
-    background_tasks.add_task(background_task)
+        try:
+            events = await process_video_parallel(video_path, parallel_calls)
+            save_results(events)
+        finally:
+            analyzing = False
+
+    analyzing = True
+    background_tasks.add_task(background_task, video_path)
+    
     return {"status": "started", "message": "Video analysis is running in the background."}
 
 @app.get("/events/")
