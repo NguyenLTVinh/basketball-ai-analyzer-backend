@@ -1,16 +1,28 @@
 import os
 import json
 import cv2
-from openai import OpenAI
+from openai import AzureOpenAI
 import base64
 from dotenv import load_dotenv
 
 load_dotenv()
-api_key = os.getenv("OPENAI_API_KEY")
+
+api_key = os.getenv("AZURE_GPT_4O_KEY")
 if not api_key:
-    raise ValueError("API key not found. Set the OPENAI_API_KEY environment variable.")
-analyzer = OpenAI(api_key=api_key)
-assistant = OpenAI(api_key=api_key)
+    raise ValueError("API key not found. Set the AZURE_OPENAI_API_KEY environment variable.")
+azure_endpoint = os.getenv("AZURE_GPT_4O_EP")
+api_version = "2024-08-01-preview"
+
+analyzer = AzureOpenAI(
+    api_key=api_key,
+    api_version=api_version,
+    azure_endpoint=azure_endpoint
+)
+assistant = AzureOpenAI(
+    api_key=api_key,
+    api_version=api_version,
+    azure_endpoint=azure_endpoint
+)
 
 def encode_image_to_base64(image):
     """Encodes an image to base64."""
@@ -45,7 +57,7 @@ def detect_events_with_gpt(frame1, frame2, frame3, timestamp):
     encoded_frame3 = encode_image_to_base64(frame3)
 
     response = analyzer.chat.completions.create(
-        model="gpt-4o-mini",
+        model="gpt-4o-video-understand",
         messages=[
             {
                 "role": "system",
@@ -111,9 +123,9 @@ def get_response_with_events(events, user_message):
     # Format events into a readable summary
     events_summary = "\n".join([f"At {event['time']}s: {event['event']}" for event in events]) or "No significant events detected."
 
-    # Send user message + detected events to OpenAI
+    # Send user message + detected events to Azure OpenAI
     response = assistant.chat.completions.create(
-        model="gpt-4o-mini",
+        model="gpt-4o-video-understand",
         messages=[
             {"role": "system", "content": "You are a basketball analyst assistant. Use provided game events to enhance responses."},
             {"role": "user", "content": f"Here are the detected basketball events:\n{events_summary}\n\nUser question: {user_message}"}
